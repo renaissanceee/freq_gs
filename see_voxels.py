@@ -11,13 +11,14 @@ import json
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from scene.visualize_utils import read_json, draw_oriented_arrows, draw_mag
+import math
 
-def visualize_freq(dataset, opt, pipe, json_file, output_dir, top_percent):
+def visualize_freq(dataset, opt, pipe, json_file, output_dir, top_percent, d_rate, min_conf):
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     viewpoint_stack = scene.getTrainCameras().copy()
     print(f'load freq from ... {json_file}')
-    positions_base, freqs_base, freqs_norm_base, orientations_base = read_json(json_file)
+    positions_base, freqs_base, freqs_norm_base, orientations_base = read_json(json_file, min_conf)
     os.makedirs(output_dir, exist_ok=True)
     # -----------------------
     ### 3d-grids ####
@@ -66,7 +67,8 @@ def visualize_freq(dataset, opt, pipe, json_file, output_dir, top_percent):
         # direction
         orientations_proj = (R @ orientations.T).T  # [N, 3]
         orientations_proj = orientations_proj[:, :2]
-        orientations_proj = orientations_proj / np.linalg.norm(orientations_proj, axis=1, keepdims=True)
+        norms = np.linalg.norm(orientations_proj, axis=1, keepdims=True)
+        orientations_proj = orientations_proj / np.where(norms == 0, 1, norms)  # 避免除以0
 
         x, y = points_proj[:, 0], points_proj[:, 1]
         valid = (x >= 0) & (x < w) & (y >= 0) & (y < h)
@@ -77,23 +79,31 @@ def visualize_freq(dataset, opt, pipe, json_file, output_dir, top_percent):
 
         # _____________________________________
         # 1) orientation
-        # top x%
-        freq_threshold = np.percentile(freqs_norm, top_percent)
-        mask_top = freqs_norm > freq_threshold
+        if d_rate is None: ### top x%
+            freq_threshold = np.percentile(freqs_norm, top_percent)
+            mask_top = freqs_norm > freq_threshold
+            output_path = os.path.join(output_dir, f"oriented_freq_{filename}_top{top_percent}percent.png")
+
+        else: ### downsample
+            mask_top = np.zeros(x.shape[0], dtype=bool)  # 初始化全False
+            mask_top[::d_rate] = True
+            if d_rate>1:
+                output_path = os.path.join(output_dir, f"orient_freq_{filename}_down{d_rate}_conf{min_conf}.png")
+            else:
+                output_path = os.path.join(output_dir, f"orient_freq_{filename}_conf{min_conf}.png")
+
         x_top, y_top = x[mask_top], y[mask_top]
         orientations_proj_top = orientations_proj[mask_top]
         freqs_top = freqs_norm[mask_top]
         colors_top = colors_bgr[mask_top]
-        output_path=os.path.join(output_dir, f"oriented_freq_{filename}_top{top_percent}percent.png")
         draw_oriented_arrows(gt_image, orientations_proj_top, x_top, y_top, freqs_top, None, True, output_path) # blue
-        draw_oriented_arrows(gt_image, orientations_proj_top, x_top, y_top, freqs_top, colors_top, False, output_path) # viridis
+        # draw_oriented_arrows(gt_image, orientations_proj_top, x_top, y_top, freqs_top, colors_top, False, output_path) # viridis
+
         # _____________________________________
-        # 2) magnitude
-        ## w/o color bar
-        output_path = os.path.join(output_dir, f"mag_freq_{filename}.png")
-        draw_mag(gt_image, x, y, h, w, freqs_norm, output_path)
-        draw_mag(gt_image, x, y, h, w, freqs_norm, output_path, bg=False)
-        # break
+        # 2) magnitude  ## w/o color bar
+        # output_path = os.path.join(output_dir, f"mag_freq_{filename}.png")
+        # draw_mag(gt_image, x, y, h, w, freqs_norm, output_path)
+        # import pdb;pdb.set_trace()
 
 
 
@@ -103,13 +113,18 @@ if __name__ == "__main__":
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
-    parser.add_argument('--json', type=str, default="voxel_frequencies_voxel.json")
-    parser.add_argument('--top', type=int, default=80)
+    parser.add_argument('--json', type=str, default="voxel_freq_grid.json")
+    parser.add_argument('--top', type=int, default=None)
+    parser.add_argument('--min_conf', type=float, default=0.7)
+    parser.add_argument('--downsample', type=int, default=1)
     # args = parser.parse_args(sys.argv[1:])
     args = parser.parse_args()
 
     print("Visualize ... " + args.model_path)
     json_file = os.path.join(args.model_path, args.json)
-    output_dir = os.path.splitext(args.json)[0].replace('voxel_frequencies', 'freq_grids')  # "freq_grids_voxel, "freq_grids_colmap"
+    # output_dir = os.path.splitext(args.json)[0].replace('voxel_frequencies', 'freq_grids')  # "freq_grids_voxel, "freq_grids_colmap"
+    # output_dir = args.json.replace('.json','').replace('voxel_grads', 'grad_grids')
+    output_dir = args.json.replace('.json','')
+
     output_dir = os.path.join(args.model_path, output_dir)
-    visualize_freq(lp.extract(args), op.extract(args), pp.extract(args), json_file, output_dir, args.top)
+    visualize_freq(lp.extract(args), op.extract(args), pp.extract(args), json_file, output_dir, args.top, args.downsample, args.min_conf)

@@ -6,15 +6,22 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import argparse
 from pathlib import Path
+import math
 
-def read_json(input_path):
+def read_json(input_path, min_conf=0.5):
     with open(input_path, "r") as f:
         data = json.load(f)
+    # print(len(data))
+    # data = [d for d in data if d["voxel_dir"] is not None] # null =noisy points
+    data = [d for d in data if d["voxel_mag"]>min_conf]  # conf>0.5, 54275->12611
+    print('filter then load from json...', len(data))
+    
     positions = np.array([d["voxel_xyz"] for d in data])
     magnitudes = np.array([d["voxel_mag"] for d in data])
     freqs_norm = magnitudes / (magnitudes.max() + 1e-6) # normaliz.
     orientations = np.array([d["voxel_dir"] for d in data])
     return positions, magnitudes, freqs_norm, orientations
+
 
 def draw_oriented_arrows_per_patch(gt_image, angle, x_coords, y_coords, freqs, colors, single_color, output_path):
     line_length = 10
@@ -41,9 +48,11 @@ def draw_oriented_arrows(gt_image, orientations, x_coords, y_coords, freqs, colo
     for i in range(0, len(orientations)):
         angle = np.arctan2(orientations[i, 1], orientations[i, 0])  # [N,]
         start_point = (int(x_coords[i]), int(y_coords[i]))
-        length = max(4 * line_length * freqs[i], line_length)
-        # dx, dy = length * np.cos(angle), length * np.sin(angle)
+        # length = max(4 * line_length * freqs[i], line_length)
+        length = line_length
         dx,dy = length * np.cos(angle), -length * np.sin(angle)
+        if math.isnan(x_coords[i] + dx) or math.isnan(y_coords[i] + dy):
+            continue
         end_point = (int(round(x_coords[i] + dx)), int(round(y_coords[i] + dy)))
         if single_color:
             cv2.arrowedLine(vis_img, start_point, end_point, (255, 0, 0), thickness=1, tipLength=0.2)  # bgr: red(0,0,255), blue(255,0,0)
@@ -51,7 +60,6 @@ def draw_oriented_arrows(gt_image, orientations, x_coords, y_coords, freqs, colo
             color_bgr = tuple(int(c) for c in colors[i])
             cv2.arrowedLine(vis_img, start_point, end_point, color_bgr, thickness=1, tipLength=0.2)
 
-    output_path = output_path.replace('.', '_blue.') if single_color else output_path
     cv2.imwrite(output_path, vis_img)
 
 

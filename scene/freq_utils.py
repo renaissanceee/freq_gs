@@ -9,9 +9,10 @@ import torchvision.transforms.functional as F
 import torch
 from scene.visualize_utils import read_json, draw_oriented_arrows, draw_mag, draw_oriented_arrows_per_patch
 
-def visualize_per_patch_freq(output_dir, image, patch_size=20):
-    image = image.permute(1, 2, 0).cpu().numpy()  # [H, W, C]
+def visualize_per_patch_freq(output_dir, gt_image, patch_size=20):
+    image = gt_image.permute(1, 2, 0).cpu().numpy()  # [H, W, C]
     image = (image * 255).clip(0, 255).astype(np.uint8)  # = cv.imread
+    # blurred = cv2.GaussianBlur(image, (5, 5), sigmaX=1.0)
     image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR).astype(np.float32)
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype(np.float32)
     h, w = gray.shape
@@ -95,6 +96,53 @@ def visualize_per_patch_freq(output_dir, image, patch_size=20):
                 full_img[i * patch_size:(i + 1) * patch_size, j * patch_size:(j + 1) * patch_size] = drawed_patch
     cv2.imwrite(f'{output_dir}/full_image_with_arrows.png', full_img)
 
+
+def visualize_per_pix_sobel(output_dir_mag, output_dir_dir, image_name, gt_image, threshold=50, down=None):
+    image = gt_image.permute(1, 2, 0).cpu().numpy()  # [H, W, C]
+    image = (image * 255).clip(0, 255).astype(np.uint8)  # = cv.imread
+
+    image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR).astype(np.float32)
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    blurred = cv2.GaussianBlur(gray, (5, 5), sigmaX=1.0)
+    h, w = blurred.shape
+
+    # sobel
+    sobel_x = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_mag = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
+    gradient_mag = cv2.normalize(gradient_mag, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+    gradient_dir = np.arctan2(sobel_y, sobel_x)  # [-π, π]
+    # threshold = np.percentile(gradient_mag.flatten(), 80) # 0.8Q
+
+    # dilation
+    # kernel = np.ones((2, 2), np.uint8)
+    # gradient_mag = cv2.dilate(gradient_mag, kernel, iterations=1)
+
+    edge_mask = gradient_mag > threshold
+    
+    # 1) mag
+    result = image_bgr.copy()
+    result[edge_mask] = (255, 0, 0)  # (0, 0, 0)
+    cv2.imwrite(os.path.join(output_dir_mag, image_name+'.png'), result) 
+
+    # 2) dir ~arrow
+    result = image_bgr.copy()
+    arrow_len = 10
+
+    down=1 if down is None else down
+    
+    for y in range(0, result.shape[0], down):  # down=5, downsample 1/5
+        for x in range(0, result.shape[1], down):
+            if not edge_mask[y, x]:
+                continue
+            angle = gradient_dir[y, x]
+            start = (x, y)
+            end = (
+                int(x + arrow_len * np.cos(angle)),
+                int(y + arrow_len * np.sin(angle))
+            )
+            cv2.arrowedLine(result, start, end, color=(255, 0, 0), thickness=1, tipLength=0.3)
+    cv2.imwrite(os.path.join(output_dir_dir, image_name+'.png'), result) 
 
 def compute_oriented_frequencies(image, patch_size=20):
     """计算带方向的频率特征"""
@@ -187,3 +235,29 @@ def compute_oriented_frequencies_reload(image_path, patch_size=20):
             f_orientation[i, j] = float(dominant_angle)# torch.tensor # torch.tensor(dominant_angle, dtype=torch.float32)
 
     return f_magnitude, f_orientation
+
+
+def compute_sobel_grad(image, threshold=50):
+    image = image.permute(1, 2, 0).cpu().numpy()  # [H, W, C]
+    image = (image * 255).clip(0, 255).astype(np.uint8)  # = cv.imread
+
+    image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR).astype(np.float32)
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    blurred = cv2.GaussianBlur(gray, (5, 5), sigmaX=1.0)
+
+    # sobel
+    sobel_x = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_mag = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
+    # print(np.max(gradient_mag), np.min(gradient_mag)) # 600, 0
+    gradient_dir = np.arctan2(sobel_y, sobel_x)  # [-π, π]
+    # threshold = np.percentile(gradient_mag.flatten(), 80) # 0.8Q
+
+    # dilation
+    # kernel = np.ones((2, 2), np.uint8)
+    # gradient_mag = cv2.dilate(gradient_mag, kernel, iterations=1)
+
+    below_mask = gradient_mag < threshold
+    gradient_mag[below_mask], gradient_dir[below_mask] = 0, None
+
+    return gradient_mag, gradient_dir
