@@ -8,20 +8,6 @@ import argparse
 from pathlib import Path
 import math
 
-def read_json(input_path, min_conf=0.5):
-    with open(input_path, "r") as f:
-        data = json.load(f)
-    # print(len(data))
-    # data = [d for d in data if d["voxel_dir"] is not None] # null =noisy points
-    data = [d for d in data if d["voxel_mag"]>min_conf]  # conf>0.5, 54275->12611
-    print('filter then load from json...', len(data))
-    
-    positions = np.array([d["voxel_xyz"] for d in data])
-    magnitudes = np.array([d["voxel_mag"] for d in data])
-    freqs_norm = magnitudes / (magnitudes.max() + 1e-6) # normaliz.
-    orientations = np.array([d["voxel_dir"] for d in data])
-    return positions, magnitudes, freqs_norm, orientations
-
 
 def draw_oriented_arrows_per_patch(gt_image, angle, x_coords, y_coords, freqs, colors, single_color, output_path):
     line_length = 10

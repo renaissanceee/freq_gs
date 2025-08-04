@@ -22,7 +22,8 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=False, resolution_scales=[1.0], colmap=False):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=False, resolution_scales=[1.0], 
+                 colmap=False, warmup=True, voxel_sample=True, json_file=None):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -79,9 +80,14 @@ class Scene:
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"))
+        elif warmup:
+            self.gaussians.create_from_voxel(scene_info.point_cloud, self.cameras_extent, voxel_size=1, colmap=colmap)
+        elif voxel_sample:
+            self.gaussians.sample_from_voxel(json_file, self.cameras_extent, voxel_size=1)
         else:
-            # self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
-            self.gaussians.create_from_voxel(scene_info.point_cloud, self.cameras_extent, voxel_size=1, colmap=colmap) # voxel_size=2
+            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+
+                
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))

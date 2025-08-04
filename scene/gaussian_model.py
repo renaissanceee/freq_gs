@@ -20,7 +20,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-
+from scene.freq_utils import read_json
 
 class GaussianModel:
 
@@ -114,7 +114,6 @@ class GaussianModel:
 
     @property
     def get_confidence(self):
-        # return self._confidence
         return self.opacity_activation(self._confidence)
 
     @property
@@ -161,29 +160,25 @@ class GaussianModel:
 
     def create_from_voxel(self, pcd: BasicPointCloud, spatial_lr_scale: float, voxel_size: float, colmap: bool):
         self.spatial_lr_scale = spatial_lr_scale
-
         points = np.asarray(pcd.points)  # shape: (N, 3)
         if colmap: ## pcd.ply
             fused_point_cloud = torch.tensor(points).float().cuda()
         else:##  point cloud voxel
+            # (-70,70)
             x = torch.arange(-70, 70, voxel_size)
             y = torch.arange(-70, 70, voxel_size)
             z = torch.arange(-70, 70, voxel_size)
 
-            # 提取colmap的范围 --> 均匀网格范围
+            # colmap_range
             # min_xyz, max_xyz = points.min(axis=0), points.max(axis=0)  # shape: (3,)
-            # ##  min_xyz, max_xyz = np.floor(min_xyz * 1.1).astype(int), np.ceil(max_xyz * 1.1).astype(int) # expand coverage
-            # print(f'x_range: {min_xyz[0], max_xyz[0]}')
-            # print(f'y_range: {min_xyz[1], max_xyz[1]}')
-            # print(f'z_range: {min_xyz[2], max_xyz[2]}')
-
-            ## x_range: (-71.01491, 50.469543)
-            ## y_range: (-28.412436, 15.778602)
-            ## z_range: (-78.73278, 75.84008)
-
+            # min_xyz, max_xyz = np.floor(min_xyz * 1.1).astype(int), np.ceil(max_xyz * 1.1).astype(int) # expand coverage
             # x = torch.arange(min_xyz[0], max_xyz[0], voxel_size)
             # y = torch.arange(min_xyz[1], max_xyz[1], voxel_size)
             # z = torch.arange(min_xyz[2], max_xyz[2], voxel_size)
+
+            # print(f'x_range: {min_xyz[0], max_xyz[0]}') # x_range: (-71.01491, 50.469543)
+            # print(f'y_range: {min_xyz[1], max_xyz[1]}') # y_range: (-28.412436, 15.778602)
+            # print(f'z_range: {min_xyz[2], max_xyz[2]}') # z_range: (-78.73278, 75.84008)
 
             xx, yy, zz = torch.meshgrid(x, y, z, indexing='ij')
             fused_point_cloud = torch.stack([xx, yy, zz], dim=-1).reshape(-1, 3).float().cuda()
@@ -212,7 +207,8 @@ class GaussianModel:
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(False))
         self._direction = nn.Parameter(directions.requires_grad_(True))
-        self._confidence = nn.Parameter(confidences.requires_grad_(True))
+        self._confidence = nn.Parameter(confidences.requires_grad_(False))
+
         # self._features_dc = nn.Parameter(features[:, :, 0:1].transpose(1, 2).contiguous().requires_grad_(True))
         # self._features_rest = nn.Parameter(features[:, :, 1:].transpose(1, 2).contiguous().requires_grad_(True))
         # self._scaling = nn.Parameter(scales.requires_grad_(True))
@@ -220,6 +216,43 @@ class GaussianModel:
         # self._opacity = nn.Parameter(opacities.requires_grad_(True))
         # self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         # self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+    def sample_from_voxel(self, json_file: str, spatial_lr_scale: float, voxel_size: int): # JJ
+        self.spatial_lr_scale = spatial_lr_scale
+
+        print(f'load freq from ... {json_file}')
+        positions_base, conf_base, conf_norm_base, orientations_base = read_json(json_file, min_conf=0.5)
+        conf_norm_base = torch.from_numpy(conf_norm_base).float().cuda()
+        orientations_base = torch.from_numpy(orientations_base).float().cuda()
+
+
+        fused_point_cloud = torch.tensor(np.asarray(positions_base)).float().cuda()
+        ## sample within voxel?
+        fused_color = RGB2SH(torch.rand((len(positions_base), 3), device='cuda'))
+        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
+        features[:, :3, 0] = fused_color
+        features[:, 3:, 1:] = 0.0
+
+        N = fused_point_cloud.shape[0]        
+        print("Number of points at initialisation : ", N)
+
+        dist2 = torch.clamp_min(distCUDA2(fused_point_cloud), 0.0000001)
+        scales = torch.log(torch.sqrt(dist2))[..., None].repeat(1, 3)
+        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
+        rots[:, 0] = 1
+
+        opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
+
+        self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
+        self._features_dc = nn.Parameter(features[:, :, 0:1].transpose(1, 2).contiguous().requires_grad_(True))
+        self._features_rest = nn.Parameter(features[:, :, 1:].transpose(1, 2).contiguous().requires_grad_(True))
+        self._scaling = nn.Parameter(scales.requires_grad_(True))
+        self._rotation = nn.Parameter(rots.requires_grad_(True))
+        self._opacity = nn.Parameter(opacities.requires_grad_(True))
+        self._voxel_xyz = nn.Parameter(fused_point_cloud.requires_grad_(False))
+        self._direction = nn.Parameter(orientations_base.requires_grad_(False))
+        self._confidence_act = nn.Parameter(conf_norm_base.requires_grad_(False))
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -244,8 +277,13 @@ class GaussianModel:
     def training_setup_voxel(self, training_args):
         # self.optimizer = torch.optim.Adam([self._direction, self._confidence], lr=0.05, eps=1e-8) # 1e-3, 0.05, 0.1
         self.optimizer = torch.optim.Adam([
-            {'params': self._direction, 'lr': 0.01},
-            {'params': self._confidence, 'lr': 0.05}
+            {'params': self._direction, 'lr': 0.05},
+            # {'params': self._confidence, 'lr': 0.05}
+        ], eps=1e-8)
+
+    def training_setup_zero(self, training_args):
+        self.optimizer = torch.optim.Adam([
+            {'params': self._direction, 'lr': 0.0},
         ], eps=1e-8)
 
     def update_learning_rate(self, iteration):

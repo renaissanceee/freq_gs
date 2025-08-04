@@ -7,7 +7,20 @@ import json
 from pathlib import Path
 import torchvision.transforms.functional as F
 import torch
-from scene.visualize_utils import read_json, draw_oriented_arrows, draw_mag, draw_oriented_arrows_per_patch
+from scene.visualize_utils import draw_oriented_arrows, draw_mag, draw_oriented_arrows_per_patch
+
+
+def read_json(input_path, min_conf=0.5):
+    with open(input_path, "r") as f:
+        data = json.load(f)
+    data = [d for d in data if d["voxel_mag"] > min_conf]  # conf>0.5, 54275->12611
+    print('filter then load from json...', len(data))
+
+    positions = np.array([d["voxel_xyz"] for d in data])
+    magnitudes = np.array([d["voxel_mag"] for d in data])
+    mag_norm = magnitudes / (magnitudes.max() + 1e-6)  # normaliz.
+    orientations = np.array([d["voxel_dir"] for d in data])
+    return positions, magnitudes, mag_norm, orientations
 
 def visualize_per_patch_freq(output_dir, gt_image, patch_size=20):
     image = gt_image.permute(1, 2, 0).cpu().numpy()  # [H, W, C]

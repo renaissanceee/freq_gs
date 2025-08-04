@@ -10,8 +10,10 @@ import numpy as np
 import json
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from scene.visualize_utils import read_json, draw_oriented_arrows, draw_mag
+from scene.freq_utils import read_json
+from scene.visualize_utils import draw_oriented_arrows, draw_mag
 import math
+import torch
 
 def visualize_freq(dataset, opt, pipe, json_file, output_dir, top_percent, d_rate, min_conf):
     gaussians = GaussianModel(dataset.sh_degree)
@@ -58,6 +60,18 @@ def visualize_freq(dataset, opt, pipe, json_file, output_dir, top_percent, d_rat
         points_cam = points_cam[in_front]
         freqs_norm = freqs_norm_base[in_front]
         orientations = orientations_base[in_front]
+
+
+
+        ## mask: distance<50
+        # distances = np.linalg.norm(points_cam, ord=2, axis=1)
+        # print(f'all_voxels={points_cam.shape[0]}')  # JJ
+        # far_mask = distances<10
+        # points_cam = points_cam[far_mask]
+        # freqs_norm = freqs_norm[far_mask]
+        # orientations = orientations[far_mask]
+        # print(f'nearby_voxels={points_cam.shape[0]}')
+
         # proj position and direction
         # position
         points_proj = (K @ points_cam.T).T
@@ -103,7 +117,7 @@ def visualize_freq(dataset, opt, pipe, json_file, output_dir, top_percent, d_rat
         # 2) magnitude  ## w/o color bar
         # output_path = os.path.join(output_dir, f"mag_freq_{filename}.png")
         # draw_mag(gt_image, x, y, h, w, freqs_norm, output_path)
-        # import pdb;pdb.set_trace()
+        import pdb;pdb.set_trace()
 
 
 
